@@ -1,11 +1,13 @@
 use std::fs::{self, File};
 use std::io::{Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use clap::Clap;
 
 use aes_gcm_siv::Aes256GcmSiv;
 use aes_gcm_siv::aead::{Aead, NewAead, generic_array::GenericArray};
+use anyhow::{Context, Result};
+
 
 #[derive(Clap, Debug)]
 #[clap(version = "0.0.0", author = "Jesper Foldager")]
@@ -51,45 +53,63 @@ struct GenerateKeyOpts{
 }
 
 
-fn main() {
+fn main() -> Result<()> {
     let opts = Opts::parse();
     match opts.subcmd {
         SubCommand::Encrypt(opts) => {
-            println!("Encrypting ...");
-            let plaintext = fs::read(opts.input).expect("failed reading plain text");
-            let key = fs::read(opts.key).expect("failed reading key");
-            let cipher = Aes256GcmSiv::new(GenericArray::from_slice(&key));
-            let mut rng = StdRng::from_entropy();
-            let nonce: [u8; 12] = rng.gen();
-            let nonce = GenericArray::from(nonce);
-            let ciphertext = cipher.encrypt(&nonce, plaintext.as_ref()).expect("Error encrypting");
-
-            
-            let mut f = File::create(opts.output).expect("unable to open output file");
-            f.write_all(&nonce).expect("write err");
-            f.write_all(&ciphertext).expect("write err");
-
+            encrypt(opts)?
         },
         SubCommand::Decrypt(opts) => {
-            println!("Decrypting ...!");
-            let ciphermsg = fs::read(opts.input).expect("error reading");
-            let nonce = GenericArray::from_slice(&ciphermsg[0..12]);
-            let ciphertext = &ciphermsg[12..];
-            let key = fs::read(opts.key).expect("failed reading key");
-            let cipher = Aes256GcmSiv::new(GenericArray::from_slice(&key));
-            let msg = cipher.decrypt(nonce, ciphertext).expect("error decrypting");
-            
-            println!("secret: {}", std::str::from_utf8(&msg).expect("error converting secret to utf8"));
-            fs::write(opts.output, msg).expect("Error writing");
+            decrypt(opts)?;
         }
         SubCommand::GenerateKey(opts) => {
-            let mut key= [0u8; 32];
-            let mut rng = StdRng::from_entropy();
-            rng.fill(&mut key);
-            fs::write(&opts.key, &key).expect("error saving key");
+            generate_key(opts)?;
         }
     }
-
-
+    Ok(())
 }
 
+fn read<P>(path: P) -> Result<Vec<u8>> 
+    where P: AsRef<Path>
+{
+    let p: &Path = path.as_ref();
+    fs::read(p).context(format!("Error reading {}", p.to_string_lossy()))
+}
+
+fn encrypt(opts: EncryptOpts) -> Result<()> {
+    println!("Encrypting ...");
+    let plaintext = read(&opts.input)?;
+    let key = read(opts.key)?;
+    let cipher = Aes256GcmSiv::new(GenericArray::from_slice(&key));
+    let mut rng = StdRng::from_entropy();
+    let nonce: [u8; 12] = rng.gen();
+    let nonce = GenericArray::from(nonce);
+    let ciphertext = cipher.encrypt(&nonce, plaintext.as_ref()).context("Error encrypting")?;
+    
+    let mut f = File::create(&opts.output).context(format!("unable to open output file {}", opts.output.to_string_lossy()))?;
+    f.write_all(&nonce).expect("write err");
+    f.write_all(&ciphertext).expect("write err");
+    Ok(())
+}
+
+fn decrypt(opts: DecryptOpts) -> Result<()> {
+    println!("Decrypting ...!");
+    let ciphermsg = fs::read(&opts.input).context(format!("Error reading {}", opts.input.to_string_lossy()))?;
+    let nonce = GenericArray::from_slice(&ciphermsg[0..12]);
+    let ciphertext = &ciphermsg[12..];
+    let key = fs::read(opts.key).context(format!("Error reading {}", opts.input.to_string_lossy()))?;
+    let cipher = Aes256GcmSiv::new(GenericArray::from_slice(&key));
+    let msg = cipher.decrypt(nonce, ciphertext).context("Authenticated decryption failed. Message or key is incorrect")?;
+    
+    println!("secret: {}", std::str::from_utf8(&msg)?);
+    fs::write(&opts.output, msg).context(format!("Error writing {}", opts.output.to_string_lossy()))?;
+    Ok(())
+}
+
+fn generate_key(opts: GenerateKeyOpts) -> Result<()>{
+    let mut key= [0u8; 32];
+    let mut rng = StdRng::from_entropy();
+    rng.fill(&mut key);
+    fs::write(&opts.key, &key).context(format!("error saving key to {}", opts.key.to_string_lossy()))?;
+    Ok(())
+}
