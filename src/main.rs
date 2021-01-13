@@ -73,6 +73,15 @@ where
     fs::read(p).context(format!("Error reading {}", p.to_string_lossy()))
 }
 
+pub fn write<P, C>(path: P, contents: C) -> Result<()>
+where
+    P: AsRef<Path>,
+    C: AsRef<[u8]>,
+{
+    let p: &Path = path.as_ref();
+    fs::write(p, contents).context(format!("Error writing {}", p.to_string_lossy()))
+}
+
 fn encrypt(opts: EncryptOpts) -> Result<()> {
     println!("Encrypting ...");
     let plaintext = read(&opts.input)?;
@@ -108,8 +117,7 @@ fn decrypt(opts: DecryptOpts) -> Result<()> {
         .context("Authenticated decryption failed. Message or key is incorrect")?;
 
     println!("secret: {}", std::str::from_utf8(&msg)?);
-    fs::write(&opts.output, msg)
-        .context(format!("Error writing {}", opts.output.to_string_lossy()))?;
+    write(&opts.output, msg)?;
     Ok(())
 }
 
@@ -117,9 +125,6 @@ fn generate_key(opts: GenerateKeyOpts) -> Result<()> {
     let mut key = [0u8; 32];
     let mut rng = StdRng::from_entropy();
     rng.fill(&mut key);
-    fs::write(&opts.key, &key).context(format!(
-        "error saving key to {}",
-        opts.key.to_string_lossy()
-    ))?;
+    write(&opts.key, &key)?;
     Ok(())
 }
